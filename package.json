@@ -50,7 +50,7 @@
         "react-dom": "18.2.0",
         "sass": "1.69.5",
         "tailwindcss": "3.3.3",
-        "typescript": "5.2.2",
+        "typescript": "5.3.3",
         "uuid": "^9.0.1"
     },
     "devDependencies": {
@@ -80,6 +80,6 @@
         "prettier": "^3.0.0",
         "puppeteer": "^21.3.8",
         "ts-node": "^10.9.1",
-        "typescript": "^5.2.2"
+        "typescript": "^5.3.3"
     }
 }
