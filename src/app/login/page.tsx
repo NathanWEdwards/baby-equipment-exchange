@@ -7,9 +7,9 @@ import { Box, TextField, Button } from '@mui/material';
 
 //Hooks
 import { useEffect, useState } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 //Libs
-import { signInAuthUserWithEmailAndPassword, onAuthStateChangedListener } from '@/api/firebase';
+import { addEvent, signInAuthUserWithEmailAndPassword, onAuthStateChangedListener } from '@/api/firebase';
 //Styling
 import globalStyles from '@/styles/globalStyles.module.scss';
 import styles from './Login.module.css';
@@ -18,25 +18,24 @@ export default function Login() {
     const [loginState, setLoginState] = useState<'pending' | 'loggedIn' | 'loggedOut'>('pending');
     const [email, setEmail] = useState<string>('');
     const [password, setPassword] = useState<string>('');
+    const [status, setStatus] = useState<string|null>(null);
     const router = useRouter();
-    const searchParams = useSearchParams();
-    const status = searchParams.get('status');
 
     useEffect(() => {
         onAuthStateChangedListener((user) => {
             if (user) router.push('/');
             else setLoginState('loggedOut');
         });
-    }, []);
+    }, [router]);
 
     const handleLogin = async (event: React.FormEvent<HTMLFormElement>): Promise<void> => {
         event.preventDefault();
-        try {
-            await signInAuthUserWithEmailAndPassword(email, password);
-            router.push('/');
-        } catch (error) {
-            router.push('/login?status=invalid_login');
-        }
+        signInAuthUserWithEmailAndPassword(email, password)
+            .then((_) => {router.push('/');})
+            .catch((error) => {
+                addEvent({"error":error});
+                setStatus('invalid_login');
+            });
     };
 
     return (
