@@ -140,7 +140,9 @@ jobs:
                       "fieldOverrides": []
                   }' > firestore.indexes.json
             - run: |
-                  echo "${APP_DATA}" > data.json
+                  echo "${APP_DATA}" >data.json
+            - run: |
+                  echo "${FIREBASE_CONFIG}" >firebase-config.json
             - run:
                   command: npm install && npm run build
                   working_directory: ~/project/functions
