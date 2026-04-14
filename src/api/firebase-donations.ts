@@ -1,6 +1,7 @@
 // Modules
 import {
     DocumentData,
+    DocumentReference,
     QueryConstraint,
     QueryDocumentSnapshot,
     SnapshotOptions,
@@ -29,7 +30,7 @@ import { Order } from '@/types/OrdersTypes';
 // Libs
 import { db, addErrorEvent, storage } from './firebase';
 import { deleteObject, ref } from 'firebase/storage';
-import { getBase64ImagesFromTagnumber } from './firebaseAdmin';
+// import { getBase64ImagesFromTagnumber } from './firebaseAdmin';
 import { AdminDonationBody, base64ImageObj } from '@/types/DonationTypes';
 import { base64ObjToFile } from '@/utils/utils';
 import { uploadImages } from './firebase-images';
@@ -37,6 +38,7 @@ import { uploadImages } from './firebase-images';
 // Imported constants
 import { USERS_COLLECTION } from './firebase-users';
 import { ORGANIZATIONS_COLLECTION } from './firebase-organizations';
+import { STORAGE_COLLECTION } from './firebase-storage';
 
 export const DONATIONS_COLLECTION = 'Donations';
 export const BULK_DONATIONS_COLLECTION = 'BulkDonations';
@@ -65,7 +67,9 @@ const donationConverter = {
             dateRequested: donation.getDateRequested(),
             dateDistributed: donation.getDateDistributed(),
             requestor: donation.getRequestor(),
-            distributor: donation.getDistributor()
+            distributor: donation.getDistributor(),
+            storage: donation.getStorage(),
+            storageDate: donation.getStorageDate()
         };
         for (const key in donationData) {
             if (donationData[key] === undefined || donationData[key] === null) {
@@ -97,7 +101,9 @@ const donationConverter = {
             dateRequested: data.dateRequested,
             dateDistributed: data.dateDistributed,
             requestor: data.requestor,
-            distributor: data.distributor
+            distributor: data.distributor,
+            storage: data.storage ?? null,
+            storageDate: data.storageDate ?? null
         };
         return new Donation(donationData);
     }
@@ -291,7 +297,9 @@ export async function addDonation(newDonations: DonationBody[], termsAccepted: s
                 dateRequested: null,
                 dateDistributed: null,
                 requestor: null,
-                distributor: null
+                distributor: null,
+                storage: null,
+                storageDate: null
             };
             const donation = new Donation(donationParams);
             batch.set(donationRef, donationConverter.toFirestore(donation));
@@ -340,7 +348,9 @@ export async function addAdminDonation(newDonations: AdminDonationBody[]): Promi
                 dateRequested: null,
                 dateDistributed: null,
                 requestor: null,
-                distributor: null
+                distributor: null,
+                storage: null,
+                storageDate: null
             };
             const donation = new Donation(donationParams);
             batch.set(donationRef, donationConverter.toFirestore(donation));
@@ -656,59 +666,96 @@ export async function markDonationAsDistributed(donation: Donation): Promise<voi
 }
 
 //The below functions are for uploading images for donations imported from the original spreadsheet
-export async function uploadImagesFromTagNumber(tagNumber: string) {
+// export async function uploadImagesFromTagNumber(tagNumber: string) {
+//     try {
+//         const base64Images: base64ImageObj[] = await getBase64ImagesFromTagnumber(tagNumber);
+//         let imageFiles: File[] = [];
+//         for (const base64Image of base64Images) {
+//             const imageFile = await base64ObjToFile(base64Image);
+//             imageFiles.push(imageFile);
+//         }
+//         const imageUrls = await uploadImages(imageFiles);
+//         return imageUrls;
+//     } catch (error) {
+//         throw error;
+//     }
+// }
+
+// export async function convertImportedDonations(): Promise<void> {
+//     try {
+//         const importsSnapshot = await getDocs(collection(db, 'BEE_Data_2025-11-19_v1'));
+//         const batch = writeBatch(db);
+//         for (const doc of importsSnapshot.docs) {
+//             const docData = doc.data();
+//             const images = await uploadImagesFromTagNumber(docData['tagNumber']);
+//             if (docData['donorEmail'] === undefined) {
+//                 batch.update(doc.ref, {
+//                     donorEmail: ''
+//                 });
+//             }
+//             if (docData['donorName'] === undefined) {
+//                 batch.update(doc.ref, {
+//                     donorName: ''
+//                 });
+//             }
+//             batch.update(doc.ref, {
+//                 images:
+//                     images.length > 0
+//                         ? images
+//                         : [
+//                               'https://firebasestorage.googleapis.com/v0/b/baby-equipment-exchange.appspot.com/o/77def461-02a2-4667-b7cf-6a9d94306823-1763596581708.jpg?alt=media&token=46d43d52-3c5d-4808-8ec5-0bb244d43405'
+//                           ],
+//                 status: docData['status'] === 'Available' ? 'available' : 'unavailable',
+//                 id: doc.id,
+//                 dateAccepted: null,
+//                 dateRequested: null,
+//                 dateDistributed: null,
+//                 requestor: null,
+//                 notes: null,
+//                 modifiedAt: serverTimestamp()
+//             });
+//         }
+//         await batch.commit();
+//         console.log('Done!');
+//     } catch (error) {
+//         console.log('Not done!');
+//         throw error;
+//     }
+// }
+
+export async function updateDonationStorage(donationId: string, storageRef: DocumentReference | null): Promise<void> {
     try {
-        const base64Images: base64ImageObj[] = await getBase64ImagesFromTagnumber(tagNumber);
-        let imageFiles: File[] = [];
-        for (const base64Image of base64Images) {
-            const imageFile = await base64ObjToFile(base64Image);
-            imageFiles.push(imageFile);
-        }
-        const imageUrls = await uploadImages(imageFiles);
-        return imageUrls;
+        const donationRef = doc(db, DONATIONS_COLLECTION, donationId);
+        await updateDoc(donationRef, {
+            storage: storageRef,
+            storageDate: serverTimestamp(),
+            modifiedAt: serverTimestamp()
+        });
     } catch (error) {
+        addErrorEvent('updateDonationStorage', error);
         throw error;
     }
 }
 
-export async function convertImportedDonations(): Promise<void> {
+export async function updateBulkDonationStorage(donationIds: string[], storageRef: DocumentReference | null): Promise<void> {
     try {
-        const importsSnapshot = await getDocs(collection(db, 'BEE_Data_2025-11-19_v1'));
         const batch = writeBatch(db);
-        for (const doc of importsSnapshot.docs) {
-            const docData = doc.data();
-            const images = await uploadImagesFromTagNumber(docData['tagNumber']);
-            if (docData['donorEmail'] === undefined) {
-                batch.update(doc.ref, {
-                    donorEmail: ''
-                });
-            }
-            if (docData['donorName'] === undefined) {
-                batch.update(doc.ref, {
-                    donorName: ''
-                });
-            }
-            batch.update(doc.ref, {
-                images:
-                    images.length > 0
-                        ? images
-                        : [
-                              'https://firebasestorage.googleapis.com/v0/b/baby-equipment-exchange.appspot.com/o/77def461-02a2-4667-b7cf-6a9d94306823-1763596581708.jpg?alt=media&token=46d43d52-3c5d-4808-8ec5-0bb244d43405'
-                          ],
-                status: docData['status'] === 'Available' ? 'available' : 'unavailable',
-                id: doc.id,
-                dateAccepted: null,
-                dateRequested: null,
-                dateDistributed: null,
-                requestor: null,
-                notes: null,
+        for (const donationId of donationIds) {
+            const donationRef = doc(db, DONATIONS_COLLECTION, donationId);
+            batch.update(donationRef, {
+                storage: storageRef,
+                storageDate: serverTimestamp(),
                 modifiedAt: serverTimestamp()
             });
         }
         await batch.commit();
-        console.log('Done!');
     } catch (error) {
-        console.log('Not done!');
+        addErrorEvent('updateBulkDonationStorage', error);
         throw error;
     }
+}
+
+// Helper to create a storage document reference
+export function getStorageDocRef(storageId: string): DocumentReference {
+    return doc(db, STORAGE_COLLECTION, storageId);
 }
