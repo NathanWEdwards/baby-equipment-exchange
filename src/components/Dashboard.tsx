@@ -11,13 +11,14 @@ import Loader from './Loader';
 import Notifications from './Notifications';
 import Inventory from './Inventory';
 import Categories from './Categories';
+import NotificationFeed from './NotificationFeed';
 //Hooks
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useRequestedInventoryContext } from '@/contexts/RequestedInventoryContext';
 import { useRouter } from 'next/navigation';
 //API
 import { addErrorEvent, getNotifications } from '@/api/firebase';
-import { getOrganizationNames } from '@/app/actions/firebase';
+import { fetchNotificationFeedData, getOrganizationNames } from '@/app/actions/firebase';
 import { getAllDonations, getAllInventory } from '@/api/firebase-donations';
 import { getAllDbUsers } from '@/api/firebase-users';
 //Icons
@@ -29,11 +30,12 @@ import '@/styles/globalStyles.css';
 import styles from '@/components/Dashboard.module.css';
 //Types
 import { Donation } from '@/models/donation';
-import { Notification } from '@/types/NotificationTypes';
+import { Notification, NotificationData, NotificationItem } from '@/types/NotificationTypes';
 import { IUser } from '@/models/user';
 import { InventoryItem } from '@/models/inventoryItem';
 import { Category } from '@/models/category';
 import { getAllCategories } from '@/api/firebase-categories';
+import { CalendlyTimeRange } from '@/types/CalendlyTypes';
 
 const tabOptions = ['Notifications', 'Donations', 'Inventory', 'Users', 'Organizations', 'Categories'];
 
@@ -47,9 +49,13 @@ export default function Dashboard() {
         [key: string]: string;
     } | null>(null);
     const [notifications, setNotifications] = useState<Notification | null>(null);
+    const [notificationData, setNotificationData] = useState<NotificationData | null>(null);
+    const [notificationItems, setNotificationItems] = useState<NotificationItem[]>([]);
+    const [highlightedEntityId, setHighlightedEntityId] = useState<string | null>(null);
     const [notificationsSubTab, setNotificationsSubTab] = useState<number>(0);
     const [categories, setCategories] = useState<Category[] | null>(null);
     const pendingNotificationScrollTop = useRef<number | null>(null);
+    const calendlyTimeRange: CalendlyTimeRange = '30days';
 
     const { requestedInventory } = useRequestedInventoryContext();
     const router = useRouter();
@@ -84,6 +90,13 @@ export default function Dashboard() {
         setCurrentTab(target);
     };
 
+    const handleFeedNavigation = useCallback((tabIndex: number, entityId: string) => {
+        setCurrentTab(0);
+        setNotificationsSubTab(tabIndex);
+        setHighlightedEntityId(entityId);
+        window.setTimeout(() => setHighlightedEntityId(null), 5000);
+    }, []);
+
     const setNotificationsUpdatedAndPreserveScroll: React.Dispatch<React.SetStateAction<boolean>> = (value) => {
         const updated = typeof value === 'function' ? value(notificationsUpdated) : value;
         if (updated && typeof window !== 'undefined') {
@@ -99,6 +112,18 @@ export default function Dashboard() {
             const notificationsResult = await getNotifications();
             setNotifications(notificationsResult);
             setNotificationsUpdated(false);
+            try {
+                const feedData = await fetchNotificationFeedData(calendlyTimeRange);
+                setNotificationData({
+                    ...notificationsResult,
+                    pickupBookingStatus: feedData.pickupBookingStatus,
+                    dropOffBookingStatus: feedData.dropOffBookingStatus,
+                    calendlyTimeRange
+                });
+                setNotificationItems(feedData.items.map((item) => ({ ...item, timestamp: new Date(item.timestamp) })));
+            } catch (error) {
+                addErrorEvent('Fetch notification feed data', error);
+            }
             if (pendingNotificationScrollTop.current !== null) {
                 const scrollTop = pendingNotificationScrollTop.current;
                 pendingNotificationScrollTop.current = null;
@@ -233,6 +258,7 @@ export default function Dashboard() {
                         </Menu>
                     </>
                 )}
+                <NotificationFeed items={notificationItems} onNavigate={handleFeedNavigation} notificationData={notificationData} />
             </div>
             {isLoading ? (
                 <Loader />
@@ -249,6 +275,8 @@ export default function Dashboard() {
                                 setNotificationsUpdated={setNotificationsUpdatedAndPreserveScroll}
                                 activeSubTab={notificationsSubTab}
                                 onSubTabChange={setNotificationsSubTab}
+                                notificationData={notificationData}
+                                highlightedEntityId={highlightedEntityId}
                             />
                         ) : (
                             <p>No notifications at this time.</p>

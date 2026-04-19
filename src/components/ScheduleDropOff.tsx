@@ -83,7 +83,9 @@ const ScheduleDropOff = (props: ScheduleDropOffProps) => {
                     await updateDonation(donation.id, {
                         status: 'pending delivery',
                         dateAccepted: serverTimestamp(),
-                        tagNumber: newTagNumber
+                        tagNumber: newTagNumber,
+                        schedulingLink: inviteUrl || null,
+                        schedulingEmailSentAt: inviteUrl ? new Date() : null
                     });
                 } catch (error) {
                     addErrorEvent('Error accepting donation', error);
