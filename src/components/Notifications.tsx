@@ -218,16 +218,20 @@ const Notifications = (props: NotificationsProps) => {
                                     : orders.map((order) => (
                                           <Paper className={notificationStyles['notification-card--container']} key={order.id} elevation={3}>
                                               <Typography variant="h6">{`${order.requestor.name} has requested the following items:`}</Typography>
-                                              {order.items.map((item) => (
-                                                  <NotificationCard
-                                                      key={item.id}
-                                                      type="order"
-                                                      donation={item}
-                                                      setIdToDisplay={setDonationIdToDisplay}
-                                                      setNotificationsUpdated={setNotificationsUpdated}
-                                                      isHighlighted={highlightedEntityId === order.id || highlightedEntityId === item.id}
-                                                  />
-                                              ))}
+                                              {order.items.length > 0 ? (
+                                                  order.items.map((item) => (
+                                                      <NotificationCard
+                                                          key={item.id}
+                                                          type="order"
+                                                          donation={item}
+                                                          setIdToDisplay={setDonationIdToDisplay}
+                                                          setNotificationsUpdated={setNotificationsUpdated}
+                                                          isHighlighted={highlightedEntityId === order.id || highlightedEntityId === item.id}
+                                                      />
+                                                  ))
+                                              ) : (
+                                                  <Typography variant="body1">No items available.</Typography>
+                                              )}
                                               <Button
                                                   className={notificationStyles['notification-card--container--btn']}
                                                   variant="contained"
