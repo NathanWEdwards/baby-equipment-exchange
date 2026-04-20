@@ -6,9 +6,11 @@ import { google } from 'googleapis';
 const OAuth2 = google.auth.OAuth2;
 
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: process.env.SMTP_HOST,
+    port: parseInt(process.env.SMTP_PORT),
+    secure: Boolean(process.env.SMTP_SECURE),
     auth: {
-        user: 'thebabyproductexchange@gmail.com',
+        user: process.env.SMTP_USER,
         pass: process.env.GOOGLE_APP_PASSWORD
     }
 });
