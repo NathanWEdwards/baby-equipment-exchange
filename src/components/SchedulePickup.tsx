@@ -13,7 +13,7 @@ import CustomDialog from './CustomDialog';
 import { getSchedulingPageLink } from '@/api/calendly';
 import { addErrorEvent } from '@/api/firebase';
 import sendMail from '@/api/nodemailer';
-import { closeOrder, updateDonationStatus } from '@/api/firebase-donations';
+import { closeOrder, updateDonationStatus, updateDonation } from '@/api/firebase-donations';
 //styles
 import '@/styles/globalStyles.css';
 //types
@@ -62,6 +62,11 @@ const SchedulePickup = (props: SchedulePickupProps) => {
             await Promise.all(
                 items.map(async (item) => {
                     await updateDonationStatus(item.id, 'reserved');
+                    // Persist scheduling link metadata for Calendly booking verification
+                    await updateDonation(item.id, {
+                        schedulingLink: inviteUrl,
+                        schedulingEmailSentAt: new Date()
+                    });
                 })
             );
             await closeOrder(id);
@@ -151,7 +156,7 @@ const SchedulePickup = (props: SchedulePickupProps) => {
                                 </NativeSelect>
                             </FormControl>
                             <Box sx={{ marginTop: '2em' }} display={'flex'} gap={2}>
-                                <Button variant="contained" disabled={!inviteUrl} onClick={handleSubmit}>
+                                <Button variant="contained" onClick={handleSubmit}>
                                     Send Email
                                 </Button>
                                 <Button variant="outlined" onClick={() => setShowScheduler(false)}>

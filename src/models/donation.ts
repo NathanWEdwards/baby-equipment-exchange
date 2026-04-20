@@ -66,6 +66,10 @@ export interface IDonation {
     dateDistributed: Timestamp | null | undefined;
     requestor: { id: string; name: string; email: string } | null;
     distributor: { id: string; name: string; email: string; organization: string } | null;
+    storage: DocumentReference | null;
+    storageDate: Timestamp | null | undefined;
+    schedulingLink?: string | null;
+    schedulingEmailSentAt?: Timestamp | null;
 }
 
 export class Donation implements IDonation {
@@ -111,6 +115,10 @@ export class Donation implements IDonation {
     dateDistributed: Timestamp | null | undefined;
     requestor: { id: string; name: string; email: string } | null;
     distributor: { id: string; name: string; email: string; organization: string } | null;
+    storage: DocumentReference | null;
+    storageDate: Timestamp | null | undefined;
+    schedulingLink: string | null | undefined;
+    schedulingEmailSentAt: Timestamp | null | undefined;
 
     constructor(args: IDonation) {
         this.id = args.id;
@@ -134,6 +142,10 @@ export class Donation implements IDonation {
         this.dateDistributed = args.dateDistributed as Timestamp;
         this.requestor = args.requestor;
         this.distributor = args.distributor;
+        this.storage = args.storage ?? null;
+        this.storageDate = args.storageDate as Timestamp;
+        this.schedulingLink = args.schedulingLink ?? null;
+        this.schedulingEmailSentAt = args.schedulingEmailSentAt as Timestamp;
     }
 
     getId(): string {
@@ -220,6 +232,18 @@ export class Donation implements IDonation {
         return this.distributor;
     }
 
+    getStorage(): DocumentReference | null {
+        return this.storage;
+    }
+
+    /**
+     * Get the date the donation was moved to a storage location
+     * @returns Timestamp or null or undefined
+     */
+    getStorageDate(): Timestamp | null | undefined {
+        return this.storageDate;
+    }
+
     getDaysInStorage(): number | undefined {
         if (this.dateReceived === undefined) {
             return undefined;
@@ -232,5 +256,13 @@ export class Donation implements IDonation {
             ? Math.floor((dateDistributed.toMillis() - dateReceived.toMillis()) / 86400000)
             : Math.floor((currentTime - dateReceived.toMillis()) / 86400000);
         return daysInStorage;
+    }
+
+    getSchedulingLink(): string | null | undefined {
+        return this.schedulingLink;
+    }
+
+    getSchedulingEmailSentAt(): Timestamp | null | undefined {
+        return this.schedulingEmailSentAt;
     }
 }

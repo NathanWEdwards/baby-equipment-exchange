@@ -1,7 +1,7 @@
 'use client';
 
 //Hooks
-import { Dispatch, SetStateAction, useState } from 'react';
+import { Dispatch, SetStateAction, useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 //Components
 import Link from 'next/link';
@@ -18,15 +18,21 @@ import {
     DialogContent,
     DialogContentText,
     DialogActions,
-    Box
+    Box,
+    FormControl,
+    InputLabel,
+    MenuItem,
+    Select,
+    IconButton
 } from '@mui/material';
 import Loader from './Loader';
 import CustomDialog from './CustomDialog';
 //Api
-import { markDonationAsDistributed, updateDonation, updateDonationStatus } from '@/api/firebase-donations';
+import { markDonationAsDistributed, updateDonation, updateDonationStatus, updateDonationStorage, getStorageDocRef } from '@/api/firebase-donations';
 import { addErrorEvent, callDeleteUser, callEnableUser } from '@/api/firebase';
 import { deleteDbUser, enableDbUser } from '@/api/firebase-users';
 import sendMail from '@/api/nodemailer';
+import dayjs from 'dayjs';
 //Styles
 import '@/styles/globalStyles.css';
 import styles from '@/components/NotificationCard.module.css';
@@ -34,7 +40,14 @@ import styles from '@/components/NotificationCard.module.css';
 import { Donation } from '@/models/donation';
 import { Order } from '@/types/OrdersTypes';
 import { IUser } from '@/models/user';
-
+import { Storage } from '@/models/storage';
+import { getStorageById } from '@/api/firebase-storage';
+import PlaceIcon from '@mui/icons-material/Place';
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import { BookingMatchConfidence } from '@/types/CalendlyTypes';
+//Email templates
 import rejectUser from '@/email-templates/rejectUser';
 import userEnabled from '@/email-templates/userEnabled';
 
@@ -45,18 +58,77 @@ type NotificationCardProps = {
     order?: Order;
     setIdToDisplay: Dispatch<SetStateAction<string | null>>;
     setNotificationsUpdated?: Dispatch<SetStateAction<boolean>>;
+    activeStorageLocations?: Storage[];
+    calendlyStatus?: BookingMatchConfidence;
+    isHighlighted?: boolean;
 };
 
-//TO-DO: Set up buttons
+const CalendlyStatusChip = ({ status }: { status?: BookingMatchConfidence }) => {
+    if (!status) return null;
+    const config: Record<BookingMatchConfidence, { icon: React.ReactNode; label: string; color: string; bg: string }> = {
+        confirmed: { icon: <CheckCircleOutlineIcon sx={{ fontSize: 13 }} />, label: 'Booked', color: '#2e7d32', bg: '#e8f5e9' },
+        'possible-match': { icon: <HelpOutlineIcon sx={{ fontSize: 13 }} />, label: 'Possible match', color: '#f57f17', bg: '#fff8e1' },
+        unconfirmed: { icon: <ErrorOutlineIcon sx={{ fontSize: 13 }} />, label: 'No booking', color: '#c62828', bg: '#ffebee' }
+    };
+    const c = config[status];
+    return (
+        <Box
+            sx={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '3px',
+                px: '7px',
+                py: '2px',
+                borderRadius: '10px',
+                fontSize: '0.675rem',
+                fontWeight: 600,
+                background: c.bg,
+                color: c.color,
+                ml: 1,
+                verticalAlign: 'middle'
+            }}
+        >
+            {c.icon} {c.label}
+        </Box>
+    );
+};
+
 const NotificationCard = (props: NotificationCardProps) => {
-    const { type, donation, user, order, setIdToDisplay, setNotificationsUpdated } = props;
+    const { type, donation, user, order, setIdToDisplay, setNotificationsUpdated, activeStorageLocations, calendlyStatus, isHighlighted } = props;
 
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [isDialogOpen, setIsDialogOpen] = useState<boolean>(false);
     const [dialogTitle, setDialogTitle] = useState<string>('');
     const [dialogContent, setDialogContent] = useState<string>('');
     const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState<boolean>(false);
+    const [isStorageDialogOpen, setIsStorageDialogOpen] = useState<boolean>(false);
+    const [selectedStorageId, setSelectedStorageId] = useState<string>('');
+    const [resolvedStorageName, setResolvedStorageName] = useState<string | null>(null);
 
+    const cardRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (isHighlighted && cardRef.current) {
+            cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }, [isHighlighted]);
+
+    // Resolve storage location name from DocumentReference
+    useEffect(() => {
+        const resolveStorage = async () => {
+            if (donation?.storage) {
+                try {
+                    const storageDoc = await getStorageById(donation.storage.id);
+                    setResolvedStorageName(storageDoc.name);
+                } catch {
+                    setResolvedStorageName('Unknown location');
+                }
+            } else {
+                setResolvedStorageName(null);
+            }
+        };
+        resolveStorage();
+    }, [donation?.storage]);
     const router = useRouter();
 
     const handleClose = () => {
@@ -161,10 +233,83 @@ const NotificationCard = (props: NotificationCardProps) => {
         }
     };
 
+    const handleStorageUpdate = async () => {
+        if (!selectedStorageId || !donation) return;
+        try {
+            const storageRef = getStorageDocRef(selectedStorageId);
+            const selectedLocation = activeStorageLocations?.find((s) => s.id === selectedStorageId);
+            // Optimistic update
+            setResolvedStorageName(selectedLocation?.name ?? 'Updated');
+            setIsStorageDialogOpen(false);
+            await updateDonationStorage(donation.id, storageRef);
+            if (setNotificationsUpdated) setNotificationsUpdated(true);
+        } catch (error) {
+            addErrorEvent('Error updating donation storage', error);
+            setResolvedStorageName(null);
+        }
+    };
+
+    const StorageLabel = () => (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: '4px', mt: 0.5 }}>
+            <PlaceIcon sx={{ fontSize: '16px', color: resolvedStorageName ? '#1976d2' : '#bdbdbd' }} />
+            <Typography variant="caption" sx={{ color: resolvedStorageName ? '#666' : '#bdbdbd' }}>
+                {resolvedStorageName ?? 'No storage assigned'} {donation?.storageDate ? `(${dayjs().diff(donation.storageDate.toDate(), 'day')} days)` : ''}
+            </Typography>
+            {activeStorageLocations && activeStorageLocations.length > 0 && (
+                <Button
+                    size="small"
+                    variant="text"
+                    sx={{ fontSize: '11px', minWidth: 'auto', padding: '0 4px', textTransform: 'none' }}
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        setIsStorageDialogOpen(true);
+                    }}
+                >
+                    Update
+                </Button>
+            )}
+        </Box>
+    );
+
+    const StorageUpdateDialog = () => (
+        <Dialog open={isStorageDialogOpen} onClose={() => setIsStorageDialogOpen(false)} maxWidth="xs" fullWidth>
+            <DialogTitle>Update Storage Location</DialogTitle>
+            <DialogContent>
+                <FormControl fullWidth sx={{ mt: 1 }}>
+                    <InputLabel id="storage-update-label">Storage Location</InputLabel>
+                    <Select
+                        labelId="storage-update-label"
+                        id="storage-update-select"
+                        value={selectedStorageId}
+                        label="Storage Location"
+                        onChange={(e) => setSelectedStorageId(e.target.value)}
+                    >
+                        {activeStorageLocations?.map((loc) => (
+                            <MenuItem key={loc.id} value={loc.id}>
+                                {loc.name}
+                            </MenuItem>
+                        ))}
+                    </Select>
+                </FormControl>
+            </DialogContent>
+            <DialogActions>
+                <Button onClick={() => setIsStorageDialogOpen(false)}>Cancel</Button>
+                <Button variant="contained" onClick={handleStorageUpdate} disabled={!selectedStorageId}>
+                    Save
+                </Button>
+            </DialogActions>
+        </Dialog>
+    );
+
     return (
         <ProtectedAdminRoute>
             {type === 'pending-donation' && donation && (
-                <Card className={styles['notification-card']} raised>
+                <Card
+                    ref={cardRef}
+                    className={styles['notification-card']}
+                    raised
+                    sx={isHighlighted ? { boxShadow: '0 0 0 2px #ffc107, 0 4px 16px rgba(255, 193, 7, 0.25)', transition: 'box-shadow 0.4s ease' } : {}}
+                >
                     <div className={styles['notification-card--group']}>
                         <CardActions className={styles['notification-card--image']} onClick={() => setIdToDisplay(donation.id)}>
                             <CardMedia component="img" alt={donation.model} image={donation.images[0]} />
@@ -172,6 +317,7 @@ const NotificationCard = (props: NotificationCardProps) => {
                         <CardContent className={styles['notification-card--info']}>
                             <Typography variant="h5">
                                 {donation.brand} - {donation.model}
+                                <CalendlyStatusChip status={calendlyStatus} />
                             </Typography>
                             <Typography variant="h6">{donation.tagNumber}</Typography>
                             <Typography variant="caption">Donated by:</Typography>
@@ -187,7 +333,12 @@ const NotificationCard = (props: NotificationCardProps) => {
                     {isLoading ? (
                         <Loader />
                     ) : (
-                        <Card className={styles['notification-card']} raised>
+                        <Card
+                            ref={cardRef}
+                            className={styles['notification-card']}
+                            raised
+                            sx={isHighlighted ? { boxShadow: '0 0 0 2px #ffc107, 0 4px 16px rgba(255, 193, 7, 0.25)', transition: 'box-shadow 0.4s ease' } : {}}
+                        >
                             <div className={styles['notification-card--group']}>
                                 <CardActions className={styles['notification-card--image']} onClick={() => setIdToDisplay(donation.id)}>
                                     <CardMedia component="img" alt={donation.model} image={donation.images[0]} />
@@ -195,6 +346,7 @@ const NotificationCard = (props: NotificationCardProps) => {
                                 <CardContent className={styles['notification-card--info']}>
                                     <Typography variant="h5">
                                         {donation.brand} - {donation.model}
+                                        <CalendlyStatusChip status={calendlyStatus} />
                                     </Typography>
                                     <Typography variant="h6">{donation.tagNumber}</Typography>
                                     {donation.dateAccepted && (
@@ -207,6 +359,7 @@ const NotificationCard = (props: NotificationCardProps) => {
                                     <Typography variant="subtitle1">
                                         {donation.donorName} ({donation.donorEmail})
                                     </Typography>
+                                    <StorageLabel />
                                 </CardContent>
                             </div>
                             <CardActions className={styles['notification-card--container--btn']}>
@@ -226,7 +379,12 @@ const NotificationCard = (props: NotificationCardProps) => {
                     {isLoading ? (
                         <Loader />
                     ) : (
-                        <Card className={styles['notification-card']} raised>
+                        <Card
+                            ref={cardRef}
+                            className={styles['notification-card']}
+                            raised
+                            sx={isHighlighted ? { boxShadow: '0 0 0 2px #ffc107, 0 4px 16px rgba(255, 193, 7, 0.25)', transition: 'box-shadow 0.4s ease' } : {}}
+                        >
                             <div className={styles['notification-card--group']}>
                                 <CardActions className={styles['notification-card--image']} onClick={() => setIdToDisplay(donation.id)}>
                                     <CardMedia component="img" alt={donation.model} image={donation.images[0]} />
@@ -234,6 +392,7 @@ const NotificationCard = (props: NotificationCardProps) => {
                                 <CardContent className={styles['notification-card--info']}>
                                     <Typography variant="h5">
                                         {donation.brand} - {donation.model}
+                                        <CalendlyStatusChip status={calendlyStatus} />
                                     </Typography>
                                     <Typography variant="h6">{donation.tagNumber}</Typography>
                                     {donation.dateRequested && (
@@ -248,6 +407,7 @@ const NotificationCard = (props: NotificationCardProps) => {
                                             {donation.requestor?.name} ({donation.requestor?.email})
                                         </Link>
                                     </Typography>
+                                    <StorageLabel />
                                 </CardContent>
                             </div>
                             <CardActions className={styles['notification-card--container--btn']}>
@@ -263,7 +423,7 @@ const NotificationCard = (props: NotificationCardProps) => {
                 </>
             )}
             {type === 'order' && donation && (
-                <Card className={styles['notification-card']} raised>
+                <Card ref={cardRef} className={styles['notification-card']} raised>
                     <div className={styles['notification-card--group']}>
                         <CardActions className={styles['notification-card--image']} onClick={() => setIdToDisplay(donation.id)}>
                             <CardMedia component="img" alt={donation.model} image={donation.images[0]} />
@@ -273,10 +433,19 @@ const NotificationCard = (props: NotificationCardProps) => {
                                 {donation.brand} - {donation.model}
                             </Typography>
                             <Typography variant="h6">{donation.tagNumber}</Typography>
+
+                            {donation.dateRequested && (
+                                <>
+                                    <Typography variant="caption">Requested on:</Typography>
+                                    <Typography variant="body1">{donation!.dateRequested!.toDate().toDateString()}</Typography>
+                                </>
+                            )}
+
                             <Typography variant="caption">Donated by:</Typography>
                             <Typography variant="subtitle1">
                                 {donation.donorName} ({donation.donorEmail})
                             </Typography>
+                            <StorageLabel />
                         </CardContent>
                     </div>
                 </Card>
@@ -287,7 +456,7 @@ const NotificationCard = (props: NotificationCardProps) => {
                         <Loader />
                     ) : (
                         <>
-                            <Card className={styles['notification-card']} raised>
+                            <Card ref={cardRef} className={styles['notification-card']} raised>
                                 <CardActions onClick={() => setIdToDisplay(user.uid)} sx={{ width: '100%' }}>
                                     <CardContent className={styles['notification-card--info']}>
                                         <Typography variant="h5">{user.displayName}</Typography>
@@ -337,6 +506,7 @@ const NotificationCard = (props: NotificationCardProps) => {
             )}
             {/* Confirmation dialog */}
             <CustomDialog isOpen={isDialogOpen} onClose={handleClose} title={dialogTitle} content={dialogContent} />
+            <StorageUpdateDialog />
         </ProtectedAdminRoute>
     );
 };

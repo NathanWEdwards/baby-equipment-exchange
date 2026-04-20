@@ -1,7 +1,7 @@
 'use client';
 
 //Components
-import { Badge, Button, IconButton, Menu, MenuItem, Tab, Tabs, Tooltip, useMediaQuery } from '@mui/material';
+import { Button, IconButton, Menu, MenuItem, Tab, Tabs, useMediaQuery } from '@mui/material';
 import Organizations from './Organizations';
 import Donations from './Donations';
 import Users from './Users';
@@ -11,30 +11,37 @@ import Loader from './Loader';
 import Notifications from './Notifications';
 import Inventory from './Inventory';
 import Categories from './Categories';
+import Reports from './Reports';
+import StorageLocations from './StorageLocations';
+import NotificationFeed from './NotificationFeed';
 //Hooks
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useRequestedInventoryContext } from '@/contexts/RequestedInventoryContext';
 import { useRouter } from 'next/navigation';
 //API
 import { addErrorEvent, callGetOrganizationNames, getNotifications } from '@/api/firebase';
 import { getAllDonations, getInventory } from '@/api/firebase-donations';
 import { getAllDbUsers } from '@/api/firebase-users';
+import { fetchNotificationFeedData } from '@/api/firebaseAdmin';
 //Icons
 import ArrowDropDownIcon from '@mui/icons-material/ArrowDropDown';
 import RefreshIcon from '@mui/icons-material/Refresh';
-import ShoppingCartIcon from '@mui/icons-material/ShoppingCart';
 //Styles
 import '@/styles/globalStyles.css';
 import styles from '@/components/Dashboard.module.css';
 //Types
 import { Donation } from '@/models/donation';
 import { Notification } from '@/types/NotificationTypes';
+import { NotificationData, NotificationItem } from '@/types/NotificationTypes';
 import { IUser } from '@/models/user';
 import { InventoryItem } from '@/models/inventoryItem';
 import { Category } from '@/models/category';
+import { Storage as StorageLocation } from '@/models/storage';
+import { CalendlyTimeRange } from '@/types/CalendlyTypes';
 import { getAllCategories } from '@/api/firebase-categories';
+import { getAllStorage } from '@/api/firebase-storage';
 
-const tabOptions = ['Notifications', 'Donations', 'Inventory', 'Users', 'Organizations', 'Categories'];
+const tabOptions = ['Notifications', 'Donations', 'Inventory', 'Users', 'Organizations', 'Categories', 'Storage', 'Reports'];
 
 export default function Dashboard() {
     const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -46,7 +53,13 @@ export default function Dashboard() {
         [key: string]: string;
     } | null>(null);
     const [notifications, setNotifications] = useState<Notification | null>(null);
+    const [notificationData, setNotificationData] = useState<NotificationData | null>(null);
+    const [notificationItems, setNotificationItems] = useState<NotificationItem[]>([]);
     const [categories, setCategories] = useState<Category[] | null>(null);
+    const [storageLocations, setStorageLocations] = useState<StorageLocation[] | null>(null);
+    const [highlightedEntityId, setHighlightedEntityId] = useState<string | null>(null);
+    const [notificationsSubTab, setNotificationsSubTab] = useState<number | null>(null);
+    const [calendlyTimeRange, setCalendlyTimeRange] = useState<CalendlyTimeRange>('30days');
 
     const { requestedInventory } = useRequestedInventoryContext();
     const router = useRouter();
@@ -58,6 +71,7 @@ export default function Dashboard() {
     const [usersUpdated, setUsersUpdated] = useState<boolean>(false);
     const [orgsUpdated, setOrgsUpdated] = useState<boolean>(false);
     const [categoriesUpdated, setCategoriesUpdated] = useState<boolean>(false);
+    const [storageUpdated, setStorageUpdated] = useState<boolean>(false);
 
     //for mobile tab menu
     const matches = useMediaQuery('(min-width:600px)');
@@ -81,12 +95,43 @@ export default function Dashboard() {
         setCurrentTab(target);
     };
 
+    // Notification Feed navigation callback
+    const handleFeedNavigation = useCallback((tabIndex: number, entityId: string) => {
+        // Switch to Notifications tab (index 0 in Dashboard)
+        setCurrentTab(0);
+        setNotificationsSubTab(tabIndex);
+        setHighlightedEntityId(entityId);
+        // Clear highlight after a few seconds
+        setTimeout(() => setHighlightedEntityId(null), 5000);
+    }, []);
+
     async function fetchNotifications(): Promise<void> {
         setIsLoading(true);
         try {
             const notificationsResult = await getNotifications();
             setNotifications(notificationsResult);
             setNotificationsUpdated(false);
+
+            // Also fetch full notification data with Calendly for the feed
+            try {
+                const feedData = await fetchNotificationFeedData(calendlyTimeRange);
+                
+                // Construct a hybrid NotificationData object purely for passing BookingStatusResult down to sub-components
+                if (notificationsResult) {
+                    setNotificationData({
+                        ...notificationsResult,
+                        pickupBookingStatus: feedData.pickupBookingStatus,
+                        dropOffBookingStatus: feedData.dropOffBookingStatus,
+                        calendlyTimeRange: calendlyTimeRange
+                    });
+                }
+                
+                // Rehydrate the ISO strings to full JS Date objects for the UI
+                const items = feedData.items.map(item => ({...item, timestamp: new Date(item.timestamp)}));
+                setNotificationItems(items);
+            } catch (error) {
+                addErrorEvent('Fetch notification data for feed', error);
+            }
         } catch (error) {
             addErrorEvent('Fetch notifications', error);
         } finally {
@@ -158,6 +203,19 @@ export default function Dashboard() {
         }
     }
 
+    async function fetchStorageLocations(): Promise<void> {
+        setIsLoading(true);
+        try {
+            const storageResult = await getAllStorage();
+            setStorageLocations(storageResult);
+            setStorageUpdated(false);
+        } catch (error) {
+            addErrorEvent('Could not fetch storage locations', error);
+        } finally {
+            setIsLoading(false);
+        }
+    }
+
     function handleRefresh() {
         if (currentTab === 0) {
             fetchNotifications();
@@ -171,6 +229,8 @@ export default function Dashboard() {
             fetchOrgNames();
         } else if (currentTab === 5) {
             fetchCategories();
+        } else if (currentTab === 6) {
+            fetchStorageLocations();
         }
     }
 
@@ -188,23 +248,44 @@ export default function Dashboard() {
             fetchOrgNames();
         } else if ((currentTab === 5 && !categories) || categoriesUpdated) {
             fetchCategories();
+        } else if ((currentTab === 6 && !storageLocations) || storageUpdated) {
+            fetchStorageLocations();
         }
-    }, [currentTab, donationsUpdated, inventoryUpdated, usersUpdated, orgsUpdated, notificationsUpdated, categoriesUpdated]);
+    }, [currentTab, donationsUpdated, inventoryUpdated, usersUpdated, orgsUpdated, notificationsUpdated, categoriesUpdated, storageUpdated]);
 
     return (
         <ProtectedAdminRoute>
             <div className={styles['navbar']}>
                 {matches ? (
-                    <>
-                        <Tabs value={currentTab} onChange={handleCurrentTab} aria-label="dashboard" variant="scrollable" scrollButtons="auto">
-                            {tabOptions.map((tab) => (
-                                <Tab key={tab} label={tab} sx={{ color: 'black' }} />
-                            ))}
-                        </Tabs>
-                    </>
+                    <Tabs
+                        value={currentTab}
+                        onChange={handleCurrentTab}
+                        aria-label="dashboard"
+                        variant="scrollable"
+                        scrollButtons="auto"
+                        sx={{
+                            flex: 1,
+                            '& .MuiTab-root': {
+                                color: '#666',
+                                fontWeight: 500,
+                                textTransform: 'none',
+                                fontSize: '0.875rem',
+                                minHeight: 48,
+                                '&.Mui-selected': { color: '#1976d2', fontWeight: 600 }
+                            },
+                            '& .MuiTabs-indicator': {
+                                height: 3,
+                                borderRadius: '3px 3px 0 0'
+                            }
+                        }}
+                    >
+                        {tabOptions.map((tab) => (
+                            <Tab key={tab} label={tab} />
+                        ))}
+                    </Tabs>
                 ) : (
                     <>
-                        <Button endIcon={<ArrowDropDownIcon />} onClick={handleClickListItem}>
+                        <Button endIcon={<ArrowDropDownIcon />} onClick={handleClickListItem} sx={{ textTransform: 'none', fontWeight: 600 }}>
                             {tabOptions[currentTab]}
                         </Button>
                         <Menu id="selected-tab" anchorEl={anchorEl} open={open} onClose={handleClose}>
@@ -216,18 +297,25 @@ export default function Dashboard() {
                         </Menu>
                     </>
                 )}
+                <NotificationFeed items={notificationItems} onNavigate={handleFeedNavigation} notificationData={notificationData} />
+                <IconButton onClick={handleRefresh} size="small" sx={{ mr: 1, color: '#666' }}>
+                    <RefreshIcon fontSize="small" />
+                </IconButton>
             </div>
+
             {isLoading ? (
                 <Loader />
             ) : (
                 <>
-                    <IconButton onClick={handleRefresh} size="large" sx={{ marginRight: 'auto', backgroundColor: '#f1f1f1', marginTop: '1rem' }}>
-                        <RefreshIcon />
-                    </IconButton>
-
                     <CustomTabPanel value={currentTab} index={0}>
                         {notifications ? (
-                            <Notifications notifications={notifications} setNotificationsUpdated={setNotificationsUpdated} />
+                            <Notifications
+                                notifications={notifications}
+                                setNotificationsUpdated={setNotificationsUpdated}
+                                notificationData={notificationData}
+                                highlightedEntityId={highlightedEntityId}
+                                requestedTab={notificationsSubTab}
+                            />
                         ) : (
                             <p>No notifications at this time.</p>
                         )}
@@ -246,6 +334,16 @@ export default function Dashboard() {
                     </CustomTabPanel>
                     <CustomTabPanel value={currentTab} index={5}>
                         {categories ? <Categories categories={categories} setCategoriesUpdated={setCategoriesUpdated} /> : <p>No categories found.</p>}
+                    </CustomTabPanel>
+                    <CustomTabPanel value={currentTab} index={6}>
+                        {storageLocations ? (
+                            <StorageLocations storageLocations={storageLocations} setStorageUpdated={setStorageUpdated} />
+                        ) : (
+                            <p>No storage locations found.</p>
+                        )}
+                    </CustomTabPanel>
+                    <CustomTabPanel value={currentTab} index={7}>
+                        <Reports />
                     </CustomTabPanel>
                 </>
             )}

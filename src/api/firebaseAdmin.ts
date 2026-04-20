@@ -2,7 +2,7 @@
 
 import 'server-only';
 
-// Libs
+//Libs
 import { setGlobalOptions } from 'firebase-functions/v2';
 import { HttpsError } from 'firebase-functions/v2/https';
 import * as logger from 'firebase-functions/logger';
@@ -13,20 +13,26 @@ import { getAuth, UserRecord } from 'firebase-admin/auth';
 import { FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { getStorage } from 'firebase-admin/storage';
 import { initializeApp, ServiceAccount } from 'firebase-admin/app';
-
 import { convertToString } from '@/utils/utils';
 import { AuthUserRecord } from '@/types/UserTypes';
-import { imageImports } from '@/data/imports/tag_image_map';
-
-const region = 'us-east1';
+import { getPickupBookingStatus, getDropOffBookingStatus } from './calendly';
+import { computeNotificationItems } from '@/api/notificationData';
+// import { imageImports } from '@/data/imports/tag_image_map';
+//Types
+import type { BookingStatusResult, CalendlyTimeRange, BookingMatchConfidence } from '@/types/CalendlyTypes';
+import type { NotificationData, NotificationItem, NotificationFilterType } from '@/types/NotificationTypes';
+import type { Donation } from '@/models/donation';
+import type { IUser } from '@/models/user';
+import type { Order } from '@/types/OrdersTypes';
+//Constants
+import { DONATIONS_COLLECTION, ORDERS_COLLECTION } from '@/api/firebase-donations';
+import { USERS_COLLECTION } from '@/api/firebase-users';
 
 setGlobalOptions({
     maxInstances: 10,
-    region: region
+    region: process.env.REGION ? process.env.REGION : 'us-east1'
 });
 
-const EVENTS_COLLECTION = 'Event';
-const USERS_COLLECTION = 'Users';
 const USER_DETAILS_COLLECTION = 'UserDetails';
 
 type Event = {
@@ -45,7 +51,7 @@ export async function initAdmin() {
         return initializeApp();
     } else {
         const credentials: ServiceAccount = {
-            projectId: 'baby-equipment-exchange',
+            projectId: 'baby-equipment-exchange-dev',
             clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
             privateKey: process.env.FIREBASE_PRIVATE_KEY
         };
@@ -73,22 +79,22 @@ function findPaths(fileNames: string[]): string[] {
 }
 
 //Used for importing images from spreadsheet
-export async function getBase64ImagesFromTagnumber(tagNumber: string) {
-    const fileNames: string[] = imageImports[tagNumber];
-    const filePaths: string[] = findPaths(fileNames);
-    let base64Files = [];
-    for (const filePath of filePaths) {
-        let name = filePath.split('\\').pop()?.split('/').pop() ?? '';
-        const fileBuffer = await fs.promises.readFile(filePath, { encoding: 'base64' });
-        const base64File = {
-            base64Image: fileBuffer,
-            base64ImageName: name,
-            base64ImageType: 'image/jpeg'
-        };
-        base64Files.push(base64File);
-    }
-    return base64Files;
-}
+// export async function getBase64ImagesFromTagnumber(tagNumber: string) {
+//     const fileNames: string[] = imageImports[tagNumber];
+//     const filePaths: string[] = findPaths(fileNames);
+//     let base64Files = [];
+//     for (const filePath of filePaths) {
+//         let name = filePath.split('\\').pop()?.split('/').pop() ?? '';
+//         const fileBuffer = await fs.promises.readFile(filePath, { encoding: 'base64' });
+//         const base64File = {
+//             base64Image: fileBuffer,
+//             base64ImageName: name,
+//             base64ImageType: 'image/jpeg'
+//         };
+//         base64Files.push(base64File);
+//     }
+//     return base64Files;
+// }
 
 export const addEvent = async (request: any) => {
     try {
@@ -613,6 +619,129 @@ export const toggleClaimForVolunteer = async (request: any) => {
     }
 };
 
+/**
+ * Fetches all notification data including Calendly booking status.
+ * This is the single source of truth for both the Dashboard Notifications tab
+ * and the Notification Feed.
+ */
+export async function fetchAllNotificationData(timeRange: CalendlyTimeRange = '30days'): Promise<NotificationData> {
+    try {
+        // Fetch core notification data
+        const [donations, users, orders] = await Promise.all([getDonationNotifications(), getUsersNotifications(), getOrdersNotifications()]);
+
+        // Fetch Calendly booking status (gracefully handle failures)
+        let pickupBookingStatus: BookingStatusResult | null = null;
+        let dropOffBookingStatus: BookingStatusResult | null = null;
+
+        try {
+            const [pickupStatus, dropOffStatus] = await Promise.all([
+                getPickupBookingStatus(donations, timeRange),
+                getDropOffBookingStatus(donations, timeRange)
+            ]);
+            pickupBookingStatus = pickupStatus;
+            dropOffBookingStatus = dropOffStatus;
+        } catch (error) {
+            console.log('fetchAllNotificationData - Calendly', error);
+            // Continue without Calendly data rather than failing entirely
+        }
+
+        return {
+            donations,
+            users,
+            orders,
+            pickupBookingStatus,
+            dropOffBookingStatus,
+            calendlyTimeRange: timeRange
+        };
+    } catch (error) {
+        console.log('fetchAllNotificationData', error);
+        throw error;
+    }
+}
+
+/**
+ * Unified server action to fetch pure serializable notification data for the client boundary.
+ * Prevents Next.js Server Action serialization crashes (e.g. "Only plain objects can be passed...").
+ */
+export async function fetchNotificationFeedData(timeRange: CalendlyTimeRange = '30days') {
+    const fullData = await fetchAllNotificationData(timeRange);
+    const items = await computeNotificationItems(fullData);
+
+    // Strip out class instances and Firestore Timestamps so they serialize correctly across the server-client boundary
+    return {
+        items: items.map((item) => ({ ...item, timestamp: item.timestamp.toISOString() })),
+        pickupBookingStatus: fullData.pickupBookingStatus,
+        dropOffBookingStatus: fullData.dropOffBookingStatus
+    };
+}
+
+async function getDonationNotifications(): Promise<Donation[]> {
+    let donations: Donation[] = [];
+    try {
+        const donationsRef = db.collection(DONATIONS_COLLECTION);
+        const donationNotificationsQuery = donationsRef.where('status', 'in', ['in processing', 'pending delivery', 'reserved']);
+        const donationsNotificationsSnapshot = await donationNotificationsQuery.get();
+        for (const doc of donationsNotificationsSnapshot.docs) {
+            donations.push(doc.data() as Donation);
+        }
+        return donations;
+    } catch (error) {
+        addErrorEvent('Get donation notifications', error);
+    }
+    return Promise.reject();
+}
+
+async function getOrdersNotifications() {
+    let orders: Order[] = [];
+    try {
+        const ordersRef = db.collection(ORDERS_COLLECTION);
+        const q = ordersRef.where('status', '==', 'open');
+        const ordersSnapshot = await q.get();
+        for (const doc of ordersSnapshot.docs) {
+            const orderInfo = doc.data();
+            let order: Order = {
+                id: doc.id,
+                status: orderInfo.status,
+                requestor: orderInfo.requestor,
+                items: [],
+                rejectedItems: []
+            };
+            for (const donation of orderInfo.items) {
+                const donationDetails = await donation.get();
+                order.items.push(donationDetails.data() as Donation);
+            }
+            if (orderInfo.rejectedItems) {
+                for (const donation of orderInfo.rejectedItems) {
+                    const donationDetails = await donation.get();
+                    order.rejectedItems?.push(donationDetails.data() as Donation);
+                }
+            }
+
+            orders.push(order);
+        }
+        return orders;
+    } catch (error) {
+        addErrorEvent('Error geting order notifications', error);
+    }
+    return Promise.reject();
+}
+
+async function getUsersNotifications(): Promise<IUser[]> {
+    let users: IUser[] = [];
+    try {
+        const usersRef = db.collection(USERS_COLLECTION);
+        const usersNotificationsQuery = usersRef.where('isDisabled', '==', true);
+        const usersNotificationsSnapshot = await usersNotificationsQuery.get();
+        for (const doc of usersNotificationsSnapshot.docs) {
+            users.push(doc.data() as IUser);
+        }
+        return users;
+    } catch (error) {
+        addErrorEvent('Get users notifications', error);
+    }
+    return Promise.reject();
+}
+
 // Non-exported utility methods
 async function _checkClaims(idToken: string, claimNames: string[]) {
     try {
@@ -639,18 +768,6 @@ async function _checkClaims(idToken: string, claimNames: string[]) {
 
 async function _addEvent(object: any) {
     try {
-        const currentTime = new Date();
-        const currentTimeString = currentTime.toDateString();
-        const db = getFirestore(app);
-        const eventParams: Event = {
-            type: '',
-            note: JSON.stringify(object),
-            createdBy: 'system',
-            createdAt: currentTimeString,
-            modifiedAt: currentTimeString
-        };
-        await db.collection(EVENTS_COLLECTION).add(eventParams);
-
         logger.warn(`Got event! ${JSON.stringify(object)}`);
     } catch (error) {
         logger.error(error);
