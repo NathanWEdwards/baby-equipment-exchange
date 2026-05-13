@@ -1,6 +1,6 @@
 'use client';
 //Hooks
-import { Dispatch, SetStateAction, useState } from 'react';
+import { Dispatch, MouseEvent, SetStateAction, SyntheticEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
 //Components
 import ProtectedAdminRoute from '@/components/ProtectedAdminRoute';
@@ -118,7 +118,7 @@ const Notifications = (props: NotificationsProps) => {
                                 {matches ? (
                                     <Tabs
                                         value={currentTab}
-                                        onChange={(_event, target) => handleTabChange(target)}
+                                        onChange={(_event: SyntheticEvent, target: number) => handleTabChange(target)}
                                         aria-label="notifications"
                                         variant="scrollable"
                                         scrollButtons="auto"
@@ -129,7 +129,7 @@ const Notifications = (props: NotificationsProps) => {
                                     </Tabs>
                                 ) : (
                                     <>
-                                        <Button endIcon={<ArrowDropDownIcon />} onClick={(event) => setAnchorEl(event.currentTarget)}>
+                                        <Button endIcon={<ArrowDropDownIcon />} onClick={(event: MouseEvent<HTMLElement>) => setAnchorEl(event.currentTarget)}>
                                             {notificationTabs[currentTab]}
                                         </Button>
                                         <Menu id="selected-notification-tab" anchorEl={anchorEl} open={open} onClose={() => setAnchorEl(null)}>
