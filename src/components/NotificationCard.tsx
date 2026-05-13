@@ -2,7 +2,6 @@
 
 //Hooks
 import { Dispatch, SetStateAction, useState } from 'react';
-import { useRouter } from 'next/navigation';
 //Components
 import Link from 'next/link';
 import ProtectedAdminRoute from './ProtectedAdminRoute';
@@ -17,8 +16,7 @@ import {
     DialogTitle,
     DialogContent,
     DialogContentText,
-    DialogActions,
-    Box
+    DialogActions
 } from '@mui/material';
 import Loader from './Loader';
 import CustomDialog from './CustomDialog';
@@ -57,8 +55,6 @@ const NotificationCard = (props: NotificationCardProps) => {
     const [dialogContent, setDialogContent] = useState<string>('');
     const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState<boolean>(false);
 
-    const router = useRouter();
-
     const handleClose = () => {
         setIsDialogOpen(false);
         setDialogTitle('');
@@ -75,7 +71,6 @@ const NotificationCard = (props: NotificationCardProps) => {
         try {
             await updateDonationStatus(id, 'available');
             if (setNotificationsUpdated) setNotificationsUpdated(true);
-            window.location.reload();
         } catch (error) {
             addErrorEvent('Mark donation as received', error);
             throw error;
@@ -102,7 +97,6 @@ const NotificationCard = (props: NotificationCardProps) => {
         try {
             await markDonationAsDistributed(donation);
             if (setNotificationsUpdated) setNotificationsUpdated(true);
-            window.location.reload();
         } catch (error) {
             addErrorEvent('Mark as distributed', error);
             throw error;
@@ -118,7 +112,6 @@ const NotificationCard = (props: NotificationCardProps) => {
                 status: 'available'
             });
             if (setNotificationsUpdated) setNotificationsUpdated(true);
-            window.location.reload();
         } catch (error) {
             addErrorEvent('Return to inventory', error);
             throw error;
