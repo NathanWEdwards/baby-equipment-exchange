@@ -34,7 +34,7 @@ const notificationTabs = ['Pending Approval', 'Pending Deliveries', 'Requested',
 const sortArrayByBulkId = (array: Donation[]): Donation[][] => {
     const groupedByField = array.reduce(
         (acc, item) => {
-            const sortByField = item.bulkCollection;
+            const sortByField = item.bulkCollection || `standalone-${item.id}`;
             if (!acc[sortByField]) {
                 acc[sortByField] = [];
             }
