@@ -7,6 +7,7 @@ import { createPortal } from 'react-dom';
 import { Badge, IconButton, Tooltip } from '@mui/material';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import CloseIcon from '@mui/icons-material/Close';
+import SearchIcon from '@mui/icons-material/Search';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import CloseFullscreenIcon from '@mui/icons-material/CloseFullscreen';
 import VolunteerActivismIcon from '@mui/icons-material/VolunteerActivism';
@@ -23,6 +24,8 @@ import NotificationCard from './NotificationCard';
 import { NotificationItem, NotificationFilterType, NotificationData } from '@/types/NotificationTypes';
 //Styles
 import styles from './NotificationFeed.module.css';
+
+type FeedCardType = 'pending-donation' | 'pending-delivery' | 'reserved' | 'order' | 'pending-user';
 
 // Types
 interface NotificationFeedProps {
@@ -44,6 +47,71 @@ const FILTERS: { key: NotificationFilterType; label: string }[] = [
 ];
 
 // Helpers
+
+function normalizeSearchValue(value: unknown): string {
+    return String(value ?? '').toLowerCase().trim();
+}
+
+function getDonationSearchFields(donation?: NotificationData['donations'][number]): unknown[] {
+    if (!donation) return [];
+
+    return [
+        donation.tagNumber,
+        donation.model,
+        donation.brand,
+        donation.category,
+        donation.description,
+        donation.id,
+        donation.donorName,
+        donation.donorEmail,
+        donation.requestor?.name,
+        donation.requestor?.email
+    ];
+}
+
+function getNotificationSearchText(item: NotificationItem, notificationData?: NotificationData | null): string {
+    const fields: unknown[] = [item.title, item.subtitle, item.entityId, item.tab, item.type];
+
+    if (!notificationData) return fields.map(normalizeSearchValue).join(' ');
+
+    if (item.entityType === 'donation') {
+        const donation = notificationData.donations?.find((d) => d.id === item.entityId);
+        fields.push(...getDonationSearchFields(donation));
+    }
+
+    if (item.entityType === 'order') {
+        const order = notificationData.orders?.find((o) => o.id === item.entityId);
+        fields.push(order?.requestor.name, order?.requestor.email);
+        order?.items.forEach((donation) => fields.push(...getDonationSearchFields(donation)));
+        order?.rejectedItems?.forEach((donation) => fields.push(...getDonationSearchFields(donation)));
+    }
+
+    if (item.entityType === 'user') {
+        const user = notificationData.users?.find((u) => u.uid === item.entityId);
+        fields.push(user?.displayName, user?.email, user?.organization?.name, user?.phoneNumber);
+    }
+
+    return fields.map(normalizeSearchValue).join(' ');
+}
+
+function getNotificationTagNumbers(item: NotificationItem, notificationData?: NotificationData | null): string[] {
+    if (!notificationData) return [];
+
+    if (item.entityType === 'donation') {
+        const tagNumber = notificationData.donations?.find((donation) => donation.id === item.entityId)?.tagNumber;
+        return tagNumber ? [tagNumber] : [];
+    }
+
+    if (item.entityType === 'order') {
+        const order = notificationData.orders?.find((o) => o.id === item.entityId);
+        const tagNumbers = [...(order?.items ?? []), ...(order?.rejectedItems ?? [])].flatMap((donation) =>
+            donation.tagNumber ? [donation.tagNumber] : []
+        );
+        return [...new Set(tagNumbers)];
+    }
+
+    return [];
+}
 
 function timeAgo(date: Date): string {
     const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -117,14 +185,26 @@ export default function NotificationFeed({ items, onNavigate, notificationData }
     const [isOpen, setIsOpen] = useState(false);
     const [isExpanded, setIsExpanded] = useState(false);
     const [activeFilter, setActiveFilter] = useState<NotificationFilterType>('all');
+    const [searchInput, setSearchInput] = useState('');
+
+    const normalizedSearchInput = normalizeSearchValue(searchInput);
+
+    const searchableItems = useMemo(() => {
+        return new Map(items.map((item) => [item.id, getNotificationSearchText(item, notificationData)]));
+    }, [items, notificationData]);
 
     const filteredItems = useMemo(() => {
-        if (activeFilter === 'all') return items;
-        if (activeFilter === 'unconfirmed-bookings') {
-            return items.filter((i) => i.calendlyStatus === 'unconfirmed' || i.calendlyStatus === 'possible-match');
-        }
-        return items.filter((i) => i.type === activeFilter);
-    }, [items, activeFilter]);
+        const itemsMatchingFilter =
+            activeFilter === 'all'
+                ? items
+                : activeFilter === 'unconfirmed-bookings'
+                  ? items.filter((i) => i.calendlyStatus === 'unconfirmed' || i.calendlyStatus === 'possible-match')
+                  : items.filter((i) => i.type === activeFilter);
+
+        if (!normalizedSearchInput) return itemsMatchingFilter;
+
+        return itemsMatchingFilter.filter((item) => searchableItems.get(item.id)?.includes(normalizedSearchInput));
+    }, [items, activeFilter, normalizedSearchInput, searchableItems]);
 
     const badgeCount = items.length;
 
@@ -145,9 +225,8 @@ export default function NotificationFeed({ items, onNavigate, notificationData }
     const handleItemClick = useCallback(
         (item: NotificationItem) => {
             onNavigate(item.tabIndex, item.entityId);
-            handleClose();
         },
-        [onNavigate, handleClose]
+        [onNavigate]
     );
 
     // Close on Escape key
@@ -163,7 +242,7 @@ export default function NotificationFeed({ items, onNavigate, notificationData }
         <>
             {/* Bell Icon with Badge */}
             <Tooltip title="Notifications">
-                <IconButton onClick={handleOpen} size="small" sx={{ ml: 'auto', mr: 0.5, color: '#666' }} id="notification-feed-icon">
+                <IconButton onClick={handleOpen} size="small" sx={{ color: '#666' }} id="notification-feed-icon" aria-label="Open notifications feed">
                     <Badge
                         badgeContent={badgeCount}
                         color="error"
@@ -188,7 +267,12 @@ export default function NotificationFeed({ items, onNavigate, notificationData }
                     <>
                         <div className={styles['feed-backdrop']} onClick={handleClose} />
 
-                        <div className={`${styles['feed-panel']} ${isExpanded ? styles['feed-panel--expanded'] : styles['feed-panel--partial']}`}>
+                        <div
+                            className={`${styles['feed-panel']} ${isExpanded ? styles['feed-panel--expanded'] : styles['feed-panel--partial']}`}
+                            role="dialog"
+                            aria-modal="true"
+                            aria-label="Notifications"
+                        >
                             {/* Header */}
                             <div className={styles['feed-header']}>
                                 <h3>Notifications</h3>
@@ -204,6 +288,29 @@ export default function NotificationFeed({ items, onNavigate, notificationData }
                                         </IconButton>
                                     </Tooltip>
                                 </div>
+                            </div>
+
+                            {/* Search */}
+                            <div className={styles['feed-search']}>
+                                <SearchIcon className={styles['feed-search-icon']} fontSize="small" />
+                                <input
+                                    aria-label="Search notifications"
+                                    className={styles['feed-search-input']}
+                                    type="search"
+                                    placeholder="Search TAG, model, brand, or person"
+                                    value={searchInput}
+                                    onChange={(event) => setSearchInput(event.target.value)}
+                                />
+                                {searchInput && (
+                                    <button
+                                        aria-label="Clear notification search"
+                                        className={styles['feed-search-clear']}
+                                        type="button"
+                                        onClick={() => setSearchInput('')}
+                                    >
+                                        <CloseIcon fontSize="small" />
+                                    </button>
+                                )}
                             </div>
 
                             {/* Filter Chips */}
@@ -222,33 +329,51 @@ export default function NotificationFeed({ items, onNavigate, notificationData }
                             {/* Feed Items */}
                             <div className={styles['feed-list']}>
                                 {filteredItems.length === 0 ? (
-                                    <div className={styles['feed-empty']}>No notifications matching this filter.</div>
+                                    <div className={styles['feed-empty']}>
+                                        {normalizedSearchInput ? 'No notifications match this search.' : 'No notifications matching this filter.'}
+                                    </div>
                                 ) : (
                                     filteredItems.map((item) => {
+                                        const tagNumbers = getNotificationTagNumbers(item, notificationData);
                                         if (isExpanded && notificationData) {
                                             const donation = notificationData.donations?.find((d) => d.id === item.entityId);
                                             const user = notificationData.users?.find((u) => u.uid === item.entityId);
                                             const order = notificationData.orders?.find((o) => o.id === item.entityId);
-
-                                            let cardType: any = null;
+                                            let cardType: FeedCardType | null = null;
                                             if (item.type === 'pending-donations') cardType = 'pending-donation';
                                             else if (item.type === 'pending-deliveries') cardType = 'pending-delivery';
                                             else if (item.type === 'reserved') cardType = 'reserved';
                                             else if (item.type === 'requested-equipment') cardType = 'order';
                                             else if (item.type === 'pending-users') cardType = 'pending-user';
 
-                                            if (cardType) {
+                                            if (cardType === 'order' && order) {
                                                 return (
-                                                    <div
-                                                        key={item.id}
-                                                        style={{ marginBottom: 16, padding: '0 20px', display: 'flex', flexDirection: 'column' }}
-                                                    >
+                                                    <div key={item.id} className={styles['feed-card-item']}>
+                                                        <p className={styles['feed-item-title']}>{order.requestor.name} requested:</p>
+                                                        {order.items.length > 0 ? (
+                                                            order.items.map((orderItem) => (
+                                                                <NotificationCard
+                                                                    key={orderItem.id}
+                                                                    type="order"
+                                                                    donation={orderItem}
+                                                                    setIdToDisplay={() => handleItemClick(item)}
+                                                                />
+                                                            ))
+                                                        ) : (
+                                                            <div className={styles['feed-empty']}>No items available for this order.</div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            }
+
+                                            if (cardType && (donation || user)) {
+                                                return (
+                                                    <div key={item.id} className={styles['feed-card-item']}>
                                                         <NotificationCard
                                                             type={cardType}
                                                             donation={donation}
                                                             user={user}
-                                                            order={order}
-                                                            setIdToDisplay={(() => handleItemClick(item)) as any} // Clicking card natively acts as navigate
+                                                            setIdToDisplay={() => handleItemClick(item)}
                                                             calendlyStatus={item.calendlyStatus}
                                                         />
                                                     </div>
@@ -273,6 +398,11 @@ export default function NotificationFeed({ items, onNavigate, notificationData }
                                                     >
                                                         {item.subtitle}
                                                     </p>
+                                                    {tagNumbers.length > 0 && (
+                                                        <p className={styles['feed-item-tags']}>
+                                                            <span>TAG</span> {tagNumbers.join(', ')}
+                                                        </p>
+                                                    )}
                                                 </div>
                                                 <span className={styles['feed-item-time']}>{timeAgo(item.timestamp)}</span>
                                             </div>
