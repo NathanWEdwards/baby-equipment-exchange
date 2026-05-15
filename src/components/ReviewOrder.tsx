@@ -20,6 +20,7 @@ import '@/styles/globalStyles.css';
 //Types
 import { Order } from '@/types/OrdersTypes';
 import { Donation } from '@/models/donation';
+import type { OrderItemRejectionResolution } from '@/api/firebase-donations';
 
 type ReviewOrderProps = {
     id: string;
@@ -29,13 +30,12 @@ type ReviewOrderProps = {
 };
 
 const ReviewOrder = (props: ReviewOrderProps) => {
-    const { order, setIdToDisplay, id, setNotificationsUpdated } = props;
+    const { setIdToDisplay, id, setNotificationsUpdated } = props;
     const [currentOrder, setCurrentOrder] = useState<Order | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [donationIdToDisplay, setDonationIdToDisplay] = useState<string | null>(null);
     const [showScheduler, setShowScheduler] = useState<boolean>(false);
     const [isDialogOpen, setIsDialogOpen] = useState<boolean>(false);
-    const [isOrderUpdated, setIsOrderUpdated] = useState<boolean>(false);
 
     const fetchOrder = async (id: string): Promise<void> => {
         setIsLoading(true);
@@ -49,15 +49,20 @@ const ReviewOrder = (props: ReviewOrderProps) => {
         }
     };
 
-    const handleRemoveFromOrder = async (orderId: string, donation: Donation): Promise<void> => {
+    const handleRemoveFromOrder = async (orderId: string, donation: Donation, resolution: OrderItemRejectionResolution): Promise<void> => {
         setIsLoading(true);
         try {
-            await removeDonationFromOrder(orderId, donation);
+            await removeDonationFromOrder(orderId, donation, resolution);
             if (currentOrder) {
+                const rejectedDonation = new Donation({
+                    ...donation,
+                    status: resolution.action === 'available' ? 'available' : resolution.action === 'requested' ? 'requested' : 'unavailable',
+                    requestor: resolution.action === 'requested' ? resolution.requestor : null
+                });
                 const updatedOrder: Order = {
                     ...currentOrder,
                     items: currentOrder.items.filter((item) => item.id !== donation.id),
-                    rejectedItems: !currentOrder.rejectedItems ? [donation] : [...currentOrder.rejectedItems, donation]
+                    rejectedItems: !currentOrder.rejectedItems ? [rejectedDonation] : [...currentOrder.rejectedItems, rejectedDonation]
                 };
                 setCurrentOrder(updatedOrder);
                 setIsDialogOpen(true);
@@ -70,14 +75,12 @@ const ReviewOrder = (props: ReviewOrderProps) => {
     };
 
     const handleClose = async (): Promise<void> => {
-        // if (setNotificationsUpdated) setNotificationsUpdated(true);
-        setIsOrderUpdated(true);
         setIsDialogOpen(false);
     };
 
     useEffect(() => {
         fetchOrder(id);
-    }, []);
+    }, [id]);
 
     return (
         <ProtectedAdminRoute>
@@ -127,11 +130,7 @@ const ReviewOrder = (props: ReviewOrderProps) => {
                                 <>
                                     <h4>Rejected items</h4>
                                     {currentOrder.rejectedItems.map((item) => (
-                                        <DonationCardMed
-                                            key={item.id}
-                                            donation={item}
-                                            setIdToDisplay={setDonationIdToDisplay}
-                                        />
+                                        <DonationCardMed key={item.id} donation={item} setIdToDisplay={setDonationIdToDisplay} />
                                     ))}
                                 </>
                             )}
